@@ -1,0 +1,52 @@
+name: Security & SAST Scan
+
+on:
+  push:
+    branches: [ "main", "deployment-*" ]
+  pull_request:
+    branches: [ "main", "deployment-*" ]
+  schedule:
+    - cron: '0 0 * * 1' # Runs every Monday at 00:00 UTC
+  workflow_dispatch: # Allows manual trigger
+
+permissions:
+  contents: read
+  security-events: write # Required to upload SARIF results to GitHub Security tab
+  actions: read
+
+jobs:
+  # Job 1: Scan for secrets (API keys, tokens, etc.) using Gitleaks
+  secret-scan:
+    name: Secret Detection (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for complete commit history scanning
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Optional: Set continue-on-error: true if you don't want secret findings to block the build
+        # continue-on-error: true
+
+  # Job 2: Static Code Analysis (SAST) using Semgrep
+  sast-scan:
+    name: Static Code Analysis (Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep CI
+        run: |
+          pip install semgrep
+          semgrep scan --sarif --output=semgrep.sarif --config=auto
+
+      - name: Upload SARIF to GitHub Security Tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+        if: always() # Upload results even if vulnerabilities are found
