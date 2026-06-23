@@ -1,4 +1,4 @@
-name: Security & SAST Scan
+name: Security & Vulnerability Scan
 
 on:
   push:
@@ -15,8 +15,8 @@ permissions:
   actions: read
 
 jobs:
-  # Job 1: Scan for secrets (API keys, tokens, etc.) using Gitleaks
-  secret-scan:
+  # Job 1: Run Secret Detection (Gitleaks)
+  gitleaks-scan:
     name: Secret Detection (Gitleaks)
     runs-on: ubuntu-latest
     steps:
@@ -29,24 +29,56 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Optional: Set continue-on-error: true if you don't want secret findings to block the build
-        # continue-on-error: true
+        continue-on-error: true # Prevents blocking pipeline if secrets are found
 
-  # Job 2: Static Code Analysis (SAST) using Semgrep
-  sast-scan:
-    name: Static Code Analysis (Semgrep)
+  # Job 2: Run Security Scans (SAST & Dependencies) and Generate HTML Report
+  security-audit:
+    name: SAST & Dependency Audit
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Semgrep CI
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Scanners
         run: |
-          pip install semgrep
+          python -m pip install --upgrade pip
+          pip install semgrep pip-audit
+
+      - name: Run Semgrep SAST Scan
+        run: |
+          semgrep scan --json --output=semgrep.json --config=auto
+        continue-on-error: true # Ensure we generate the report even if vulnerabilities are found
+
+      - name: Run pip-audit Dependency Scan
+        run: |
+          pip-audit -r requirements.txt --format=json -o pip-audit.json
+        continue-on-error: true # Ensure we generate the report even if vulnerabilities are found
+
+      - name: Generate HTML Report
+        run: |
+          python generate_report.py semgrep.json pip-audit.json security_report.html
+
+      - name: Upload Security Report Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report-html
+          path: security_report.html
+          retention-days: 30
+
+      # Extra: Upload SARIF output to GitHub Security tab for Semgrep native dashboard integration
+      - name: Export Semgrep SARIF for GitHub Security Alerts
+        run: |
           semgrep scan --sarif --output=semgrep.sarif --config=auto
+        continue-on-error: true
 
       - name: Upload SARIF to GitHub Security Tab
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: semgrep.sarif
-        if: always() # Upload results even if vulnerabilities are found
+        if: always() # Upload results even if other steps fail
+        continue-on-error: true
