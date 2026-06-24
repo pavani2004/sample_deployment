@@ -1,24 +1,29 @@
 import sqlite3
+import os
+import ast
 
-# Hardcoded Secret (Insecure Coding Practice / Secret Leak)
-GITHUB_API_KEY = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"
-AWS_SECRET_KEY = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+# Load secrets from environment variables to avoid hardcoding credentials
+GITHUB_API_KEY = os.environ.get("GITHUB_API_KEY", "")
+AWS_SECRET_KEY = os.environ.get("AWS_SECRET_KEY", "")
 
 def login_user(username, password):
-    # SQL Injection Vulnerability (Direct string concatenation in query)
+    # Fixed SQL Injection Vulnerability using Parameterized Queries
     connection = sqlite3.connect("database.db")
     cursor = connection.cursor()
     
-    query = f"SELECT * FROM users WHERE username = '{username}' AND password = '{password}'"
-    cursor.execute(query)
+    query = "SELECT * FROM users WHERE username = ? AND password = ?"
+    cursor.execute(query, (username, password))
     user = cursor.fetchone()
     return user
 
 def execute_user_calculation(expression):
-    # Remote Code Execution / Insecure deserialization/execution using eval
-    result = eval(expression)
-    return result
+    # Fixed Remote Code Execution by avoiding eval and using ast.literal_eval for safe literal evaluation
+    try:
+        result = ast.literal_eval(expression)
+        return result
+    except (ValueError, SyntaxError):
+        return "Invalid input for safe evaluation"
 
 if __name__ == "__main__":
-    print("Testing mock insecure code patterns...")
-    print("API Key loaded successfully (Simulated secret scan target).")
+    print("Testing secure code patterns...")
+    print("API Key loaded safely from environment (Simulated secret check).")

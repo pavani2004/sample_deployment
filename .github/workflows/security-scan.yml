@@ -1,4 +1,4 @@
-name: Security & Vulnerability Scan
+name: Security & SAST Scan
 
 on:
   push:
@@ -15,8 +15,8 @@ permissions:
   actions: read
 
 jobs:
-  # Job 1: Run Secret Detection (Gitleaks)
-  gitleaks-scan:
+  # Job 1: Scan for secrets (API keys, tokens, etc.) using Gitleaks
+  secret-scan:
     name: Secret Detection (Gitleaks)
     runs-on: ubuntu-latest
     steps:
@@ -29,56 +29,82 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true # Prevents blocking pipeline if secrets are found
+        # Optional: Set continue-on-error: true if you don't want secret findings to block the build
+        # continue-on-error: true
 
-  # Job 2: Run Security Scans (SAST & Dependencies) and Generate HTML Report
-  security-audit:
-    name: SAST & Dependency Audit
+  # Job 2: Static Code Analysis (SAST) using Semgrep
+  sast-scan:
+    name: Static Code Analysis (Semgrep)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install Scanners
+      - name: Run Semgrep CI
         run: |
-          python -m pip install --upgrade pip
-          pip install semgrep pip-audit
-
-      - name: Run Semgrep SAST Scan
-        run: |
-          semgrep scan --json --output=semgrep.json --config=auto
-        continue-on-error: true # Ensure we generate the report even if vulnerabilities are found
-
-      - name: Run pip-audit Dependency Scan
-        run: |
-          pip-audit -r requirements.txt --format=json -o pip-audit.json
-        continue-on-error: true # Ensure we generate the report even if vulnerabilities are found
-
-      - name: Generate HTML Report
-        run: |
-          python generate_report.py semgrep.json pip-audit.json security_report.html
-
-      - name: Upload Security Report Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-report-html
-          path: security_report.html
-          retention-days: 30
-
-      # Extra: Upload SARIF output to GitHub Security tab for Semgrep native dashboard integration
-      - name: Export Semgrep SARIF for GitHub Security Alerts
-        run: |
+          pip install semgrep
           semgrep scan --sarif --output=semgrep.sarif --config=auto
-        continue-on-error: true
 
       - name: Upload SARIF to GitHub Security Tab
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: semgrep.sarif
-        if: always() # Upload results even if other steps fail
-        continue-on-error: true
+        if: always() # Upload results even if vulnerabilities are found
+
+  # Job 3: Container Security Scanning for Docker images
+  container-scan:
+    name: Container Security (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the Docker image (with fallback to NodeJS base image if no Dockerfile exists)
+      - name: Build Docker Image
+        run: |
+          if [ -f Dockerfile ]; then
+            docker build -t local-image:${{ github.sha }} .
+          else
+            echo "No Dockerfile found. Creating a temporary base image for testing scan."
+            echo "FROM node:18-alpine" > Dockerfile
+            docker build -t local-image:${{ github.sha }} .
+          fi
+
+      # Generate a human-readable table/report with Critical, High, Medium, Low severities
+      - name: Run Trivy Scan (Human Readable Report)
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: 'local-image:${{ github.sha }}'
+          format: 'table'
+          output: 'container-security-report.txt'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+          vuln-type: 'os,library'
+
+      # Generate SARIF report to integrate with GitHub Repository Security Alerts
+      - name: Run Trivy Scan (SARIF Report)
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: 'local-image:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+          vuln-type: 'os,library'
+
+      # Upload the human-readable report as a build artifact
+      - name: Upload Detailed Vulnerability Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-vulnerability-report
+          path: container-security-report.txt
+        if: always()
+
+      # Upload SARIF file for GitHub Security Alerts tab
+      - name: Upload SARIF to GitHub Security Tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+        if: always()
+

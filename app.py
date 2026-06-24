@@ -1,13 +1,18 @@
 import os
 import sys
+import ast
 
-# Mock API Key (Hardcoded secret to trigger Gitleaks & Semgrep Secrets rule)
-API_KEY = "xoxb-123456789012-345678901234-abcdefghijklmnopqrstuvwx"
+# Load API Key from environment variables to avoid hardcoding secrets
+API_KEY = os.environ.get("SLACK_API_KEY", "")
 
 def process_data(user_input):
     print(f"Processing input: {user_input}")
-    # Unsafe eval (SAST vulnerability - CWE-95)
-    return eval(user_input)
+    # Secure evaluation of literal structures using ast.literal_eval instead of eval()
+    try:
+        return ast.literal_eval(user_input)
+    except (ValueError, SyntaxError):
+        return "Invalid input for safe evaluation"
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
